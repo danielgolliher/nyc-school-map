@@ -48,8 +48,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 }
 
 .drawer-handle {
-    width: 36px; height: 4px; background: #ccc; border-radius: 4px;
-    margin: 0 auto 10px; cursor: grab;
+    width: 40px; height: 5px; background: #bbb; border-radius: 4px;
+    margin: 4px auto 10px; cursor: grab;
+}
+@media (max-width: 768px) {
+    .panel:not(.open) { cursor: grab; }
+    .panel:not(.open) h1::after { content: ' \2014 pull up'; font-size: 12px; color: #aaa; font-weight: 400; }
 }
 .toggle-btn {
     background: white; border: 1px solid #ddd; border-radius: 8px;
@@ -401,26 +405,55 @@ function render() {
 
 function setupMobile() {
     const panel = document.getElementById('panel');
-    const handle = document.getElementById('drawerHandle');
     let startY, startTranslate, dragging = false;
 
-    handle.addEventListener('touchstart', e => {
-        dragging = true; startY = e.touches[0].clientY;
+    // Allow drag from anywhere on the panel.
+    // When the panel is collapsed (peek mode), any touch starts a drag.
+    // When the panel is open, only touches near the top (first 60px) start a drag
+    // so the user can still scroll the content below.
+    panel.addEventListener('touchstart', e => {
+        const isOpen = panel.classList.contains('open');
+        const touchY = e.touches[0].clientY;
+        const panelTop = panel.getBoundingClientRect().top;
+        const offsetInPanel = touchY - panelTop;
+
+        if (isOpen && offsetInPanel > 60) return; // let content scroll
+        dragging = true;
+        startY = touchY;
         const m = new DOMMatrix(getComputedStyle(panel).transform);
-        startTranslate = m.m42; panel.style.transition = 'none';
+        startTranslate = m.m42;
+        panel.style.transition = 'none';
     }, { passive: true });
-    document.addEventListener('touchmove', e => {
+
+    panel.addEventListener('touchmove', e => {
         if (!dragging) return;
         const dy = e.touches[0].clientY - startY;
         panel.style.transform = 'translateY(' + Math.max(0, startTranslate + dy) + 'px)';
     }, { passive: true });
-    document.addEventListener('touchend', () => {
-        if (!dragging) return; dragging = false; panel.style.transition = '';
+
+    panel.addEventListener('touchend', () => {
+        if (!dragging) return;
+        dragging = false;
+        panel.style.transition = '';
         const m = new DOMMatrix(getComputedStyle(panel).transform);
-        if (m.m42 > panel.offsetHeight * 0.4) { panel.classList.remove('open'); } else { panel.classList.add('open'); }
+        const currentY = m.m42;
+        const panelH = panel.offsetHeight;
+        if (currentY > panelH * 0.4) {
+            panel.classList.remove('open');
+        } else {
+            panel.classList.add('open');
+        }
         panel.style.transform = '';
     });
-    handle.addEventListener('click', () => { panel.classList.toggle('open'); panel.style.transform = ''; });
+
+    // Tap the peek area to expand
+    panel.addEventListener('click', (e) => {
+        if (window.innerWidth > 768) return;
+        if (panel.classList.contains('open')) return;
+        panel.classList.add('open');
+        panel.style.transform = '';
+    });
+
     document.getElementById('toggleBtn').addEventListener('click', () => { panel.classList.toggle('collapsed'); });
     map.on('click', () => { if (window.innerWidth <= 768) { panel.classList.remove('open'); panel.style.transform = ''; } });
 }
