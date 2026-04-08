@@ -9,6 +9,7 @@
 <title>NYC Public Schools — Enrollment Map (2024-25)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -137,6 +138,53 @@ table.breakdown .highlight { color: #dc2626; font-weight: 700; }
     .leaflet-top { top: 85px !important; }
 }
 
+/* Popup source button */
+.popup .src-btn {
+    display: inline-block; margin-top: 8px; padding: 6px 12px;
+    background: #f0f0f0; border: 1px solid #ddd; border-radius: 6px;
+    font-size: 11px; color: #333; text-decoration: none; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.popup .src-btn:hover { background: #e4e4e4; }
+.popup .src-links { display: none; margin-top: 6px; font-size: 11px; line-height: 1.6; }
+.popup .src-links.show { display: block; }
+.popup .src-links a { color: #2563eb; }
+
+/* QR button (desktop: top-left, mobile: hidden — use mobile bar version) */
+.qr-btn {
+    position: absolute; top: 10px; left: 56px; z-index: 1000;
+    background: white; border: none; border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.12); padding: 8px 14px;
+    cursor: pointer; font-size: 13px; font-weight: 600; color: #333;
+    display: flex; align-items: center; gap: 6px;
+    -webkit-tap-highlight-color: transparent;
+}
+.qr-btn:hover { background: #f5f5f5; }
+.qr-btn svg { width: 18px; height: 18px; }
+@media (max-width: 768px) {
+    .qr-btn { top: auto; left: 10px; bottom: 80px; }
+}
+
+/* QR modal */
+.qr-overlay {
+    display: none; position: fixed; inset: 0; z-index: 3000;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+}
+.qr-overlay.show { display: flex; }
+.qr-modal {
+    background: white; border-radius: 16px; padding: 28px; text-align: center;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.25); max-width: 340px; width: 90vw;
+}
+.qr-modal h3 { font-size: 15px; margin-bottom: 4px; }
+.qr-modal .qr-sub { font-size: 11px; color: #888; margin-bottom: 16px; }
+.qr-modal img { width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; }
+.qr-modal .qr-url { font-size: 11px; color: #666; margin-top: 12px; word-break: break-all; }
+.qr-modal .qr-close {
+    margin-top: 16px; padding: 10px 28px; border: none; border-radius: 8px;
+    background: #1a1a1a; color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+
 /* Loading */
 .loading {
     position: absolute; inset: 0; z-index: 2000;
@@ -149,6 +197,21 @@ table.breakdown .highlight { color: #dc2626; font-weight: 700; }
 <body>
 <div class="loading" id="loading">Loading schools...</div>
 <div id="map"></div>
+
+<!-- QR code button + modal -->
+<button class="qr-btn" id="qrBtn" title="Show QR code">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/><rect x="18" y="14" width="3" height="1"/><rect x="14" y="18" width="1" height="3"/></svg>
+    QR Code
+</button>
+<div class="qr-overlay" id="qrOverlay">
+    <div class="qr-modal">
+        <h3>Share this map</h3>
+        <div class="qr-sub">Scan to open on your phone</div>
+        <div id="qrImg"></div>
+        <div class="qr-url" id="qrUrl"></div>
+        <button class="qr-close" id="qrClose">Close</button>
+    </div>
+</div>
 
 <!-- Mobile top bar -->
 <div class="mobile-bar" id="mobileBar">
@@ -297,11 +360,19 @@ function render() {
         });
         const badge = isSmall ? ' <span class="badge">&le;150</span>' : '';
         const ec = isSmall ? 'enroll small' : 'enroll';
+        const uid = 'src-' + s.b;
+        const nysedUrl = 'https://data.nysed.gov/enrollment.php?year=2025&instid=' + (s.i || s.b);
+        const locUrl = 'https://data.cityofnewyork.us/Education/2019-2020-School-Locations/wg9x-4ke6';
         m.bindPopup(
             '<div class="popup"><h3>' + s.n + badge + '</h3>' +
             '<div class="' + ec + '">' + s.e.toLocaleString() + ' students</div>' +
             '<div class="meta"><b>DBN:</b> ' + s.d + '<br><b>Level:</b> ' + (s.c||'N/A') +
-            '<br><b>Grades:</b> ' + (s.g||'N/A') + '<br><b>Address:</b> ' + (s.a||'N/A') + '</div></div>',
+            '<br><b>Grades:</b> ' + (s.g||'N/A') + '<br><b>Address:</b> ' + (s.a||'N/A') + '</div>' +
+            '<button class="src-btn" onclick="document.getElementById(\'' + uid + '\').classList.toggle(\'show\')">View Data Sources</button>' +
+            '<div class="src-links" id="' + uid + '">' +
+            '<b>Enrollment:</b> <a href="' + nysedUrl + '" target="_blank" rel="noopener">NYSED BEDS Day Enrollment 2024-25</a><br>' +
+            '<b>Location:</b> <a href="' + locUrl + '" target="_blank" rel="noopener">NYC Open Data School Locations</a>' +
+            '</div></div>',
             { maxWidth: 280 }
         );
         m.addTo(map); markers.push(m); shown++;
@@ -353,6 +424,23 @@ function setupMobile() {
     document.getElementById('toggleBtn').addEventListener('click', () => { panel.classList.toggle('collapsed'); });
     map.on('click', () => { if (window.innerWidth <= 768) { panel.classList.remove('open'); panel.style.transform = ''; } });
 }
+
+// QR code
+document.getElementById('qrBtn').addEventListener('click', () => {
+    const url = window.location.href;
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    document.getElementById('qrImg').innerHTML = qr.createSvgTag({ scalable: true });
+    document.getElementById('qrUrl').textContent = url;
+    document.getElementById('qrOverlay').classList.add('show');
+});
+document.getElementById('qrClose').addEventListener('click', () => {
+    document.getElementById('qrOverlay').classList.remove('show');
+});
+document.getElementById('qrOverlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) document.getElementById('qrOverlay').classList.remove('show');
+});
 
 init();
 </script>
