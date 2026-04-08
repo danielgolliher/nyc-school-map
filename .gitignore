@@ -1,0 +1,5 @@
+*.mdb
+*.accdb
+*.zip
+enrollment_2025.csv
+__pycache__/

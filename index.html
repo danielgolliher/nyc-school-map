@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1a1a1a">
+<title>NYC Public Schools — Enrollment Map (2024-25)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f0f0; }
+#map { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+
+/* ── Panel (desktop: sidebar, mobile: bottom drawer) ── */
+.panel {
+    position: absolute; z-index: 1000; background: white;
+    font-size: 13px; line-height: 1.5;
+    transition: transform 0.3s ease;
+}
+@media (min-width: 769px) {
+    .panel {
+        top: 10px; right: 10px; width: 360px;
+        padding: 20px; border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+        max-height: calc(100vh - 20px); overflow-y: auto;
+    }
+    .drawer-handle { display: none; }
+    .panel.collapsed { transform: translateX(calc(100% + 20px)); }
+    .toggle-btn { position: absolute; top: 12px; right: 12px; }
+}
+@media (max-width: 768px) {
+    .panel {
+        bottom: 0; left: 0; right: 0;
+        padding: 10px 16px 24px;
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+        max-height: 60vh; overflow-y: auto;
+        transform: translateY(calc(100% - 72px));
+    }
+    .panel.open { transform: translateY(0); }
+    .toggle-btn { display: none; }
+}
+
+.drawer-handle {
+    width: 36px; height: 4px; background: #ccc; border-radius: 4px;
+    margin: 0 auto 10px; cursor: grab;
+}
+.toggle-btn {
+    background: white; border: 1px solid #ddd; border-radius: 8px;
+    padding: 4px 10px; cursor: pointer; font-size: 18px; line-height: 1;
+}
+
+h1 { font-size: 17px; color: #1a1a1a; }
+.subtitle { color: #666; font-size: 11px; margin-bottom: 10px; }
+
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.stat-box { background: #f8f9fa; padding: 8px; border-radius: 8px; text-align: center; }
+.stat-box .num { font-size: 22px; font-weight: 800; color: #1a1a1a; }
+.stat-box .label { font-size: 9px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-box.red { background: #fef2f2; border: 2px solid #fca5a5; }
+.stat-box.red .num { color: #dc2626; }
+
+.legend { margin: 10px 0 8px; }
+.legend-row { display: flex; align-items: center; margin: 2px 0; font-size: 12px; color: #555; }
+.legend-dot { width: 11px; height: 11px; border-radius: 50%; margin-right: 7px; flex-shrink: 0; }
+
+.filters { border-top: 1px solid #eee; padding-top: 10px; margin-top: 8px; }
+.filters strong { font-size: 13px; }
+.filters label { display: block; margin: 5px 0; cursor: pointer; font-size: 13px; color: #444; }
+.filters input[type=checkbox] { width: 18px; height: 18px; margin-right: 8px; accent-color: #dc2626; vertical-align: middle; }
+.filters select {
+    width: 100%; padding: 10px; margin-top: 4px; border-radius: 8px;
+    border: 1px solid #ddd; font-size: 14px; background: white;
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23666' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+}
+
+table.breakdown { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+table.breakdown th {
+    text-align: left; font-size: 10px; color: #999; text-transform: uppercase;
+    letter-spacing: 0.5px; border-bottom: 1px solid #eee; padding: 4px 6px;
+}
+table.breakdown td { padding: 5px 6px; }
+table.breakdown td:nth-child(2), table.breakdown td:nth-child(3) { text-align: right; }
+table.breakdown .highlight { color: #dc2626; font-weight: 700; }
+
+/* Popup */
+.leaflet-popup-content-wrapper { border-radius: 12px !important; }
+.leaflet-popup-content { margin: 12px 14px !important; }
+.popup { min-width: 200px; }
+.popup h3 { font-size: 14px; margin: 0 0 2px; line-height: 1.3; }
+.popup .enroll { font-size: 20px; font-weight: 800; margin: 4px 0; }
+.popup .enroll.small { color: #dc2626; }
+.popup .meta { font-size: 12px; color: #555; line-height: 1.5; }
+.popup .badge {
+    display: inline-block; background: #dc2626; color: white;
+    padding: 1px 7px; border-radius: 12px; font-size: 10px;
+    font-weight: 700; letter-spacing: 0.3px; vertical-align: middle;
+}
+
+/* Mobile top bar */
+.mobile-bar {
+    display: none; position: absolute; top: 0; left: 0; right: 0; z-index: 1001;
+    background: rgba(26,26,26,0.92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
+    color: white; font-size: 13px;
+}
+.mobile-bar .title-row { display: flex; align-items: center; justify-content: space-between; }
+.mobile-bar h2 { font-size: 15px; font-weight: 700; }
+.mobile-bar .pill {
+    background: #dc2626; padding: 3px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 700;
+}
+.mobile-bar .filter-row { display: flex; gap: 6px; margin-top: 6px; overflow-x: auto; }
+.mobile-bar .filter-row select {
+    flex: 1; min-width: 0; padding: 7px 8px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.2); font-size: 13px;
+    background: rgba(255,255,255,0.12); color: white;
+    -webkit-appearance: none; appearance: none;
+}
+.mobile-bar .filter-row option { color: #1a1a1a; }
+.mobile-bar .chip {
+    padding: 7px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
+    font-size: 13px; background: transparent; color: white; cursor: pointer;
+    white-space: nowrap; -webkit-tap-highlight-color: transparent;
+}
+.mobile-bar .chip.active { background: #dc2626; border-color: #dc2626; }
+
+@media (max-width: 768px) {
+    .mobile-bar { display: block; }
+    .leaflet-top { top: 85px !important; }
+}
+
+/* Loading */
+.loading {
+    position: absolute; inset: 0; z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+    background: white; font-size: 16px; color: #666;
+}
+.loading.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="loading" id="loading">Loading schools...</div>
+<div id="map"></div>
+
+<!-- Mobile top bar -->
+<div class="mobile-bar" id="mobileBar">
+    <div class="title-row">
+        <h2>NYC Public Schools</h2>
+        <div class="pill" id="mSmallCount"></div>
+    </div>
+    <div class="filter-row">
+        <div class="chip" id="mChipSmall">&#8804;150 only</div>
+        <select id="mBorough">
+            <option value="all">All boroughs</option>
+            <option value="31">Manhattan</option>
+            <option value="32">Bronx</option>
+            <option value="33">Brooklyn</option>
+            <option value="34">Queens</option>
+            <option value="35">Staten Island</option>
+        </select>
+        <select id="mCategory">
+            <option value="all">All levels</option>
+        </select>
+    </div>
+</div>
+
+<!-- Desktop sidebar / mobile bottom drawer -->
+<div class="panel" id="panel">
+    <div class="drawer-handle" id="drawerHandle"></div>
+    <button class="toggle-btn" id="toggleBtn" title="Hide panel">&times;</button>
+    <h1>NYC Public Schools</h1>
+    <div class="subtitle">NYSED BEDS Day Enrollment, 2024-25 &bull; DOE non-charter schools</div>
+    <div class="stat-grid" id="stats"></div>
+    <div class="legend">
+        <div class="legend-row"><div class="legend-dot" style="background:#dc2626;border:2px solid #991b1b"></div> &le;150 students</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#f59e0b"></div> 151 &ndash; 300</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#3b82f6"></div> 301 &ndash; 600</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#22c55e"></div> 601 &ndash; 1,000</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#047857"></div> 1,001+</div>
+    </div>
+    <div class="filters">
+        <strong>Filters</strong>
+        <label><input type="checkbox" id="fSmall"> Show only small schools (&le;150)</label>
+        <label>
+            Borough:
+            <select id="fBorough">
+                <option value="all">All boroughs</option>
+                <option value="31">Manhattan</option>
+                <option value="32">Bronx</option>
+                <option value="33">Brooklyn</option>
+                <option value="34">Queens</option>
+                <option value="35">Staten Island</option>
+            </select>
+        </label>
+        <label>
+            School level:
+            <select id="fCategory">
+                <option value="all">All levels</option>
+            </select>
+        </label>
+    </div>
+    <div id="breakdown" style="margin-top:10px"></div>
+</div>
+
+<script>
+const BN = {'31':'Manhattan','32':'Bronx','33':'Brooklyn','34':'Queens','35':'Staten Island'};
+let schools = [];
+let markers = [];
+let map;
+
+function init() {
+    map = L.map('map', { zoomControl: false, attributionControl: false }).setView([40.7128, -73.97], 11);
+    L.control.zoom({ position: 'topleft' }).addTo(map);
+    L.control.attribution({ position: 'bottomleft' }).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png', {
+        attribution: '&copy; <a href="https://openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+        maxZoom: 19
+    }).addTo(map);
+
+    fetch('schools.json')
+        .then(r => r.json())
+        .then(data => { schools = data; document.getElementById('loading').classList.add('hidden'); setupFilters(); render(); setupMobile(); });
+}
+
+function setupFilters() {
+    const cats = [...new Set(schools.map(s => s.c).filter(Boolean))].sort();
+    [document.getElementById('fCategory'), document.getElementById('mCategory')].forEach(sel => {
+        cats.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+    });
+    document.getElementById('fSmall').addEventListener('change', syncFromDesktop);
+    document.getElementById('fBorough').addEventListener('change', syncFromDesktop);
+    document.getElementById('fCategory').addEventListener('change', syncFromDesktop);
+    document.getElementById('mChipSmall').addEventListener('click', function() {
+        this.classList.toggle('active');
+        document.getElementById('fSmall').checked = this.classList.contains('active');
+        render();
+    });
+    document.getElementById('mBorough').addEventListener('change', function() {
+        document.getElementById('fBorough').value = this.value; render();
+    });
+    document.getElementById('mCategory').addEventListener('change', function() {
+        document.getElementById('fCategory').value = this.value; render();
+    });
+}
+
+function syncFromDesktop() {
+    const chip = document.getElementById('mChipSmall');
+    if (document.getElementById('fSmall').checked) chip.classList.add('active'); else chip.classList.remove('active');
+    document.getElementById('mBorough').value = document.getElementById('fBorough').value;
+    document.getElementById('mCategory').value = document.getElementById('fCategory').value;
+    render();
+}
+
+function color(e) {
+    if (e <= 150) return '#dc2626';
+    if (e <= 300) return '#f59e0b';
+    if (e <= 600) return '#3b82f6';
+    if (e <= 1000) return '#22c55e';
+    return '#047857';
+}
+
+function render() {
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    const onlySmall = document.getElementById('fSmall').checked;
+    const bv = document.getElementById('fBorough').value;
+    const cv = document.getElementById('fCategory').value;
+    let shown = 0;
+    const bStats = {};
+
+    schools.forEach(s => {
+        const bc = s.b.substring(0, 2);
+        const bn = BN[bc] || 'D75/D79';
+        if (!bStats[bn]) bStats[bn] = {total: 0, small: 0};
+        bStats[bn].total++;
+        const isSmall = s.e <= 150;
+        if (isSmall) bStats[bn].small++;
+
+        if (onlySmall && !isSmall) return;
+        if (bv !== 'all' && bc !== bv) return;
+        if (cv !== 'all' && s.c !== cv) return;
+
+        const r = isSmall ? 8 : (s.e > 1000 ? 6 : 5);
+        const m = L.circleMarker([s.la, s.ln], {
+            radius: r, fillColor: color(s.e),
+            color: isSmall ? '#991b1b' : '#fff',
+            weight: isSmall ? 2.5 : 1, opacity: 1,
+            fillOpacity: isSmall ? 0.95 : 0.7
+        });
+        const badge = isSmall ? ' <span class="badge">&le;150</span>' : '';
+        const ec = isSmall ? 'enroll small' : 'enroll';
+        m.bindPopup(
+            '<div class="popup"><h3>' + s.n + badge + '</h3>' +
+            '<div class="' + ec + '">' + s.e.toLocaleString() + ' students</div>' +
+            '<div class="meta"><b>DBN:</b> ' + s.d + '<br><b>Level:</b> ' + (s.c||'N/A') +
+            '<br><b>Grades:</b> ' + (s.g||'N/A') + '<br><b>Address:</b> ' + (s.a||'N/A') + '</div></div>',
+            { maxWidth: 280 }
+        );
+        m.addTo(map); markers.push(m); shown++;
+    });
+
+    const total = schools.length;
+    const smallTotal = schools.filter(s => s.e <= 150).length;
+    const totalE = schools.reduce((a, s) => a + s.e, 0);
+
+    document.getElementById('stats').innerHTML =
+        '<div class="stat-box"><div class="num">' + total.toLocaleString() + '</div><div class="label">Public Schools</div></div>' +
+        '<div class="stat-box red"><div class="num">' + smallTotal + '</div><div class="label">Schools &le;150</div></div>' +
+        '<div class="stat-box"><div class="num">' + shown.toLocaleString() + '</div><div class="label">Showing</div></div>' +
+        '<div class="stat-box"><div class="num">' + (totalE/1000).toFixed(0) + 'K</div><div class="label">Total Students</div></div>';
+
+    document.getElementById('mSmallCount').textContent = smallTotal + ' small';
+
+    let html = '<table class="breakdown"><tr><th>Borough</th><th>Schools</th><th>&le;150</th></tr>';
+    Object.entries(bStats).sort((a,b) => b[1].small - a[1].small).forEach(([b, st]) => {
+        const cls = st.small > 0 ? ' class="highlight"' : '';
+        html += '<tr><td>' + b + '</td><td>' + st.total + '</td><td' + cls + '>' + st.small + '</td></tr>';
+    });
+    html += '</table>';
+    document.getElementById('breakdown').innerHTML = html;
+}
+
+function setupMobile() {
+    const panel = document.getElementById('panel');
+    const handle = document.getElementById('drawerHandle');
+    let startY, startTranslate, dragging = false;
+
+    handle.addEventListener('touchstart', e => {
+        dragging = true; startY = e.touches[0].clientY;
+        const m = new DOMMatrix(getComputedStyle(panel).transform);
+        startTranslate = m.m42; panel.style.transition = 'none';
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+        if (!dragging) return;
+        const dy = e.touches[0].clientY - startY;
+        panel.style.transform = 'translateY(' + Math.max(0, startTranslate + dy) + 'px)';
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+        if (!dragging) return; dragging = false; panel.style.transition = '';
+        const m = new DOMMatrix(getComputedStyle(panel).transform);
+        if (m.m42 > panel.offsetHeight * 0.4) { panel.classList.remove('open'); } else { panel.classList.add('open'); }
+        panel.style.transform = '';
+    });
+    handle.addEventListener('click', () => { panel.classList.toggle('open'); panel.style.transform = ''; });
+    document.getElementById('toggleBtn').addEventListener('click', () => { panel.classList.toggle('collapsed'); });
+    map.on('click', () => { if (window.innerWidth <= 768) { panel.classList.remove('open'); panel.style.transform = ''; } });
+}
+
+init();
+</script>
+</body>
+</html>
